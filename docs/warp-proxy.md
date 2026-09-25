@@ -31,15 +31,25 @@ Both modes use the same image and the same `entrypoint.sh`. They differ in the `
 ## 2. Architecture
 
 ```
- Host                                 Container
-┌──────────────────┐                 ┌───────────────────────────────────────┐
-│ Browser / SSH    │── SOCKS5 ──────▶│ microsocks :1080 (user "socks")       │
-│ 127.0.0.1:1080   │                 │        │                              │
-└──────────────────┘                 │        ▼  kill switch (nftables)      │
-                                     │ CloudflareWARP interface (MASQUE)     │
- Other traffic                       │        │                              │
- ──▶ ISP (unchanged)                 │   warp-svc ───────────────────────────┼──▶ Cloudflare ──▶ Internet / private network
-                                     └───────────────────────────────────────┘
+ Host                                Container
++------------------+                +-----------------------------------+
+| Browser / SSH    |     SOCKS5     | microsocks :1080 (user "socks")   |
+| 127.0.0.1:1080   | -------------> |                 |                 |
++------------------+                |                 v                 |
+                                    |      kill switch (nftables)       |
+                                    |                 |                 |
+ Other traffic                      |                 v                 |
+ --> ISP (unchanged)                | CloudflareWARP interface (MASQUE) |
+                                    |                 |                 |
+                                    |                 v                 |
+                                    |             warp-svc              |
+                                    +-----------------|-----------------+
+                                                      |
+                                                      v
+                                                 Cloudflare
+                                                      |
+                                                      v
+                                         Internet / private network
 ```
 
 - `warp-svc` creates the tunnel in the container network namespace, not in the host one.
