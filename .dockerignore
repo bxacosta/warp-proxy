@@ -1,0 +1,3 @@
+# Ignore everything and allow only what the Dockerfile uses
+*
+!entrypoint.sh

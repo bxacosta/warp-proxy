@@ -1,0 +1,42 @@
+x-warp-proxy: &warp-proxy
+  build:
+    context: .
+    args:
+      WARP_VERSION: ""
+  image: warp-proxy:latest
+  restart: unless-stopped
+  init: true
+  cap_add:
+    - NET_ADMIN
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  consumer:
+    <<: *warp-proxy
+    container_name: warp-proxy
+    environment:
+      WARP_MODE: consumer
+    ports:
+      - "127.0.0.1:1080:1080"
+    volumes:
+      - ./data/consumer:/var/lib/cloudflare-warp
+
+  zerotrust:
+    <<: *warp-proxy
+    profiles: ["zerotrust"]
+    container_name: warp-proxy-zerotrust
+    environment:
+      WARP_MODE: zerotrust
+    ports:
+      - "127.0.0.1:1081:1080"
+    volumes:
+      - ./data/zerotrust:/var/lib/cloudflare-warp
+    # Internal domains without public DNS (name:IP)
+    # extra_hosts:
+    #   - "git.internal.example:10.0.0.10"
