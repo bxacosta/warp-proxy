@@ -1,30 +1,32 @@
 # Cloudflare WARP as a SOCKS5 proxy in Docker
 
-Docker container that runs the Cloudflare WARP client and exposes it as a local SOCKS5 proxy. Only the traffic of applications configured to use the proxy goes through Cloudflare; the host routing is not modified.
+Docker container that runs the Cloudflare WARP client and exposes it as a local SOCKS5 proxy. Only the traffic of applications configured to
+use the proxy goes through Cloudflare; the host routing is not modified.
 
 ---
 
 ## 1. Concepts
 
-| Term | Definition |
-|---|---|
-| **WARP** | Cloudflare client (`warp-svc` and `warp-cli`) that establishes an encrypted tunnel between the device and the Cloudflare network. |
-| **Consumer mode** | WARP with a personal account: Free, or WARP+ through a license key. Use case: browsing through Cloudflare. |
+| Term                | Definition                                                                                                                                                    |
+|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **WARP**            | Cloudflare client (`warp-svc` and `warp-cli`) that establishes an encrypted tunnel between the device and the Cloudflare network.                             |
+| **Consumer mode**   | WARP with a personal account: Free, or WARP+ through a license key. Use case: browsing through Cloudflare.                                                    |
 | **Zero Trust mode** | WARP enrolled in a Cloudflare Zero Trust organization. Applies the organization policies and provides access to its private network (internal web, Git, SSH). |
-| **Registration** | Device identity in Cloudflare (account, keys). Stored in `reg.json` and `conf.json`. |
-| **Kill switch** | Firewall rule that prevents proxy traffic from leaving through any path other than the WARP tunnel. |
+| **Registration**    | Device identity in Cloudflare (account, keys). Stored in `reg.json` and `conf.json`.                                                                          |
+| **Kill switch**     | Firewall rule that prevents proxy traffic from leaving through any path other than the WARP tunnel.                                                           |
 
-Both modes use the same image and the same `entrypoint.sh`. They differ in the `WARP_MODE` variable, the registration directory and the port:
+Both modes use the same image and the same `entrypoint.sh`. They differ in the `WARP_MODE` variable, the registration directory and the
+port:
 
-| | Consumer | Zero Trust |
-|---|---|---|
-| Compose service | `consumer` | `zerotrust` |
-| Container | `warp-proxy` | `warp-proxy-zerotrust` |
-| `WARP_MODE` | `consumer` | `zerotrust` |
-| Registration | `data/consumer/` | `data/zerotrust/` |
-| Proxy | `127.0.0.1:1080` | `127.0.0.1:1081` |
-| Registration method | Automatic on first start | Manual: SSO login and token |
-| Start | `docker compose up -d` | `docker compose --profile zerotrust up -d zerotrust` |
+|                     | Consumer                 | Zero Trust                                           |
+|---------------------|--------------------------|------------------------------------------------------|
+| Compose service     | `consumer`               | `zerotrust`                                          |
+| Container           | `warp-proxy`             | `warp-proxy-zerotrust`                               |
+| `WARP_MODE`         | `consumer`               | `zerotrust`                                          |
+| Registration        | `data/consumer/`         | `data/zerotrust/`                                    |
+| Proxy               | `127.0.0.1:1080`         | `127.0.0.1:1081`                                     |
+| Registration method | Automatic on first start | Manual: SSO login and token                          |
+| Start               | `docker compose up -d`   | `docker compose --profile zerotrust up -d zerotrust` |
 
 ---
 
@@ -54,7 +56,8 @@ Both modes use the same image and the same `entrypoint.sh`. They differ in the `
 
 - `warp-svc` creates the tunnel in the container network namespace, not in the host one.
 - `microsocks` accepts SOCKS5 connections and forwards them through the tunnel. It runs as the unprivileged user `socks`.
-- Kill switch: the `socks` user can only send traffic through the `CloudflareWARP` interface. If WARP disconnects, proxy connections fail instead of leaving through the ISP. Docker's embedded DNS (`127.0.0.11`) is also blocked.
+- Kill switch: the `socks` user can only send traffic through the `CloudflareWARP` interface. If WARP disconnects, proxy connections fail
+  instead of leaving through the ISP. Docker's embedded DNS (`127.0.0.11`) is also blocked.
 - If `warp-svc` or `microsocks` exits, the container exits and Docker restarts it (`restart: unless-stopped`).
 - The port is published on `127.0.0.1` only: the proxy is not reachable from other machines on the network.
 
@@ -122,14 +125,14 @@ HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
 ENTRYPOINT ["/entrypoint.sh"]
 ```
 
-| Element | Purpose |
-|---|---|
-| `ARG WARP_VERSION` | `cloudflare-warp` version. Empty = latest available. Example: `2026.7.1377.0`. |
-| `dbus` | Required by `warp-svc`. |
-| `nftables`, `iproute2` | Kill switch and tunnel interface management. |
-| `microsocks` | SOCKS5 server. |
-| `socks` user | Unprivileged user that runs the proxy and is subject to the kill switch. |
-| `HEALTHCHECK` | Verifies every 60 s that proxy traffic goes through WARP (`warp=on`). |
+| Element                | Purpose                                                                        |
+|------------------------|--------------------------------------------------------------------------------|
+| `ARG WARP_VERSION`     | `cloudflare-warp` version. Empty = latest available. Example: `2026.7.1377.0`. |
+| `dbus`                 | Required by `warp-svc`.                                                        |
+| `nftables`, `iproute2` | Kill switch and tunnel interface management.                                   |
+| `microsocks`           | SOCKS5 server.                                                                 |
+| `socks` user           | Unprivileged user that runs the proxy and is subject to the kill switch.       |
+| `HEALTHCHECK`          | Verifies every 60 s that proxy traffic goes through WARP (`warp=on`).          |
 
 ### 5.2 `entrypoint.sh`
 
@@ -252,7 +255,7 @@ services:
 
   zerotrust:
     <<: *warp-proxy
-    profiles: ["zerotrust"]
+    profiles: [ "zerotrust" ]
     container_name: warp-proxy-zerotrust
     environment:
       WARP_MODE: zerotrust
@@ -265,14 +268,14 @@ services:
     #   - "git.internal.example:10.0.0.10"
 ```
 
-| Element | Purpose |
-|---|---|
-| `x-warp-proxy` | Settings shared by both services (YAML anchor merged with `<<: *warp-proxy`). |
-| `cap_add: NET_ADMIN`, `/dev/net/tun` | Required to create the tunnel and apply the kill switch. |
-| `profiles: ["zerotrust"]` | The `zerotrust` service only starts when the profile is explicitly requested. |
-| `ports: 127.0.0.1:…` | Local access only. `"1080:1080"` would expose it to the whole network, without authentication. |
-| `extra_hosts` | Static resolution of internal domains without public DNS (Zero Trust mode). |
-| `logging` | Docker log rotation: 3 files of 10 MB. |
+| Element                              | Purpose                                                                                        |
+|--------------------------------------|------------------------------------------------------------------------------------------------|
+| `x-warp-proxy`                       | Settings shared by both services (YAML anchor merged with `<<: *warp-proxy`).                  |
+| `cap_add: NET_ADMIN`, `/dev/net/tun` | Required to create the tunnel and apply the kill switch.                                       |
+| `profiles: ["zerotrust"]`            | The `zerotrust` service only starts when the profile is explicitly requested.                  |
+| `ports: 127.0.0.1:…`                 | Local access only. `"1080:1080"` would expose it to the whole network, without authentication. |
+| `extra_hosts`                        | Static resolution of internal domains without public DNS (Zero Trust mode).                    |
+| `logging`                            | Docker log rotation: 3 files of 10 MB.                                                         |
 
 ### 5.4 `.dockerignore`
 
@@ -282,7 +285,9 @@ services:
 !entrypoint.sh
 ```
 
-Allowlist: excludes everything from the build context except `entrypoint.sh`, the only file copied by the `Dockerfile`. Files or directories added to the project (for example `data/`, which holds credentials) stay out of the image without changing this file. If the `Dockerfile` gets a new `COPY`, the copied file must be added with `!<path>`.
+Allowlist: excludes everything from the build context except `entrypoint.sh`, the only file copied by the `Dockerfile`. Files or directories
+added to the project (for example `data/`, which holds credentials) stay out of the image without changing this file. If the `Dockerfile`
+gets a new `COPY`, the copied file must be added with `!<path>`.
 
 ### 5.5 `.gitattributes`
 
@@ -338,7 +343,8 @@ The license key is obtained in the 1.1.1.1 app (iOS/Android) with an active WARP
 
 - The key binding happens on Cloudflare servers. Restoring `data/consumer/` does not revert it; to revert, apply the key noted in step 1.
 - `Too many devices`: the key reached its device limit.
-- The key is accepted but the account stays `Free`: the key has no WARP+ quota. Keys from the WARP+ referral program (ended on 2024-11-01) fall into this case.
+- The key is accepted but the account stays `Free`: the key has no WARP+ quota. Keys from the WARP+ referral program (ended on 2024-11-01)
+  fall into this case.
 
 ### 6.2 Zero Trust mode
 
@@ -358,7 +364,8 @@ Without a registration, the proxy does not forward traffic.
 1. In a browser on the host, open `https://<team-name>.cloudflareaccess.com/warp`.
 2. Complete the organization SSO login.
 3. Cancel the browser dialog that asks to open the WARP application.
-4. On the confirmation page, inspect the button that opens WARP and copy the value of its `href` attribute, which starts with `com.cloudflare.warp://`.
+4. On the confirmation page, inspect the button that opens WARP and copy the value of its `href` attribute, which starts with
+   `com.cloudflare.warp://`.
 
 **4. Inject the token** right after obtaining it, since it expires:
 
@@ -375,7 +382,9 @@ docker exec warp-proxy-zerotrust warp-cli --accept-tos status             # Stat
 ```
 
 **Considerations:**
-- The kill switch only allows traffic through the tunnel. Networks that the organization excludes from the tunnel (*split tunnels*) are not reachable through the proxy.
+
+- The kill switch only allows traffic through the tunnel. Networks that the organization excludes from the tunnel (*split tunnels*) are not
+  reachable through the proxy.
 - If the organization enforces the connection mode, the mode change is ignored and a notice is logged.
 - Re-authentication when the Access session expires:
 
@@ -479,16 +488,20 @@ ssh -G github.com  | Select-String "proxycommand"                     # empty: d
 scp -o ProxyCommand="nc -X 5 -x 127.0.0.1:1081 %h %p" ./file user@<server-ip>:/path/
 ```
 
-Windows OpenSSH is very slow for bulk transfers whenever a `ProxyCommand` is used, regardless of the helper (`connect.exe`, `ncat`). Interactive sessions are not noticeably affected. OpenSSH on Linux (including WSL) with `nc` does not show this behavior.
+Windows OpenSSH is very slow for bulk transfers whenever a `ProxyCommand` is used, regardless of the helper (`connect.exe`, `ncat`).
+Interactive sessions are not noticeably affected. OpenSSH on Linux (including WSL) with `nc` does not show this behavior.
 
-**Keepalives.** `ServerAliveInterval` and `ServerAliveCountMax` (e.g. `-o ServerAliveInterval=30 -o ServerAliveCountMax=6`) make the client send keepalives through the encrypted channel and detect a dead connection. They help when idle sessions are dropped or when an intermediate hop (proxy, NAT, tunnel reconnection) leaves a connection hung (`Broken pipe`, `Connection reset`). They do not resume an interrupted transfer; `rsync --partial` and `sftp reput` can.
+**Keepalives.** `ServerAliveInterval` and `ServerAliveCountMax` (e.g. `-o ServerAliveInterval=30 -o ServerAliveCountMax=6`) make the client
+send keepalives through the encrypted channel and detect a dead connection. They help when idle sessions are dropped or when an intermediate
+hop (proxy, NAT, tunnel reconnection) leaves a connection hung (`Broken pipe`, `Connection reset`). They do not resume an interrupted
+transfer; `rsync --partial` and `sftp reput` can.
 
 ### 7.4 Git
 
-| URL type | Proxy applied |
-|---|---|
-| SSH (`git@<host>:group/repo.git`) | The one in `~/.ssh/config` (7.3). No extra configuration. |
-| HTTPS (`https://<host>/group/repo.git`) | Requires Git's own configuration. |
+| URL type                                | Proxy applied                                             |
+|-----------------------------------------|-----------------------------------------------------------|
+| SSH (`git@<host>:group/repo.git`)       | The one in `~/.ssh/config` (7.3). No extra configuration. |
+| HTTPS (`https://<host>/group/repo.git`) | Requires Git's own configuration.                         |
 
 HTTPS proxy scoped to one host:
 
@@ -500,7 +513,8 @@ git config --global http.https://<host>.proxy socks5h://127.0.0.1:1081
 
 ### 7.5 Database clients and other applications
 
-Applications with SOCKS5 support (DBeaver, DataGrip, etc.) are configured in the connection proxy settings: type `SOCKS5`, host `127.0.0.1`, port `1081`. The database host is the internal IP.
+Applications with SOCKS5 support (DBeaver, DataGrip, etc.) are configured in the connection proxy settings: type `SOCKS5`, host `127.0.0.1`,
+port `1081`. The database host is the internal IP.
 
 ### 7.6 Testing a TCP port
 
@@ -519,26 +533,26 @@ For HTTP services: `curl.exe --socks5-hostname 127.0.0.1:1081 http://<ip>:<port>
 
 Commands for consumer mode. For Zero Trust: container `warp-proxy-zerotrust` and port `1081`.
 
-| # | Check | Command | Expected result |
-|---|---|---|---|
-| 1 | Registration | `docker exec warp-proxy warp-cli --accept-tos registration show` | Expected ID and account type. After a restore, the same ID as before. |
-| 2 | Connection | `docker exec warp-proxy warp-cli --accept-tos status` | `Connected`, `Network: healthy` |
-| 3 | Health | `docker ps` | `(healthy)` 1-2 min after start |
-| 4 | Egress through WARP | `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace` | `warp=on` or `warp=plus` |
-| 5 | Host unchanged | `curl https://www.cloudflare.com/cdn-cgi/trace` | `warp=off`, ISP IP |
-| 6 | Kill switch | `docker exec warp-proxy warp-cli --accept-tos disconnect`, then repeat #4 | #4 fails. It must never return the ISP IP. |
-| 7 | Reconnection | `docker exec warp-proxy warp-cli --accept-tos connect`, then repeat #4 | `warp=on` |
+| # | Check               | Command                                                                          | Expected result                                                       |
+|---|---------------------|----------------------------------------------------------------------------------|-----------------------------------------------------------------------|
+| 1 | Registration        | `docker exec warp-proxy warp-cli --accept-tos registration show`                 | Expected ID and account type. After a restore, the same ID as before. |
+| 2 | Connection          | `docker exec warp-proxy warp-cli --accept-tos status`                            | `Connected`, `Network: healthy`                                       |
+| 3 | Health              | `docker ps`                                                                      | `(healthy)` 1-2 min after start                                       |
+| 4 | Egress through WARP | `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace` | `warp=on` or `warp=plus`                                              |
+| 5 | Host unchanged      | `curl https://www.cloudflare.com/cdn-cgi/trace`                                  | `warp=off`, ISP IP                                                    |
+| 6 | Kill switch         | `docker exec warp-proxy warp-cli --accept-tos disconnect`, then repeat #4        | #4 fails. It must never return the ISP IP.                            |
+| 7 | Reconnection        | `docker exec warp-proxy warp-cli --accept-tos connect`, then repeat #4           | `warp=on`                                                             |
 
 In the configured browser, `https://www.cloudflare.com/cdn-cgi/trace` must show `warp=on`.
 
 **Additional checks in Zero Trust mode:**
 
-| Check | Command | Expected result |
-|---|---|---|
-| Configuration received from the organization | `docker exec warp-proxy-zerotrust warp-cli --accept-tos settings` | `Organization`, split tunnel mode (`Include mode` / `Exclude mode`) with its IP list, tunnel protocol |
-| Destinations routed through the tunnel | `docker exec warp-proxy-zerotrust warp-cli --accept-tos settings \| Select-String "<ip>"` | The IP (or a range containing it) appears in the `Include mode` list |
-| Tunnel routing table | `docker exec warp-proxy-zerotrust warp-cli --accept-tos tunnel dump` | In Include mode it lists what is **excluded** (long list); the short list is in `settings` |
-| Access to an internal service | Section 7.6 | Connection established |
+| Check                                        | Command                                                                                   | Expected result                                                                                       |
+|----------------------------------------------|-------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| Configuration received from the organization | `docker exec warp-proxy-zerotrust warp-cli --accept-tos settings`                         | `Organization`, split tunnel mode (`Include mode` / `Exclude mode`) with its IP list, tunnel protocol |
+| Destinations routed through the tunnel       | `docker exec warp-proxy-zerotrust warp-cli --accept-tos settings \| Select-String "<ip>"` | The IP (or a range containing it) appears in the `Include mode` list                                  |
+| Tunnel routing table                         | `docker exec warp-proxy-zerotrust warp-cli --accept-tos tunnel dump`                      | In Include mode it lists what is **excluded** (long list); the short list is in `settings`            |
+| Access to an internal service                | Section 7.6                                                                               | Connection established                                                                                |
 
 ---
 
@@ -546,11 +560,11 @@ In the configured browser, `https://www.cloudflare.com/cdn-cgi/trace` must show 
 
 Back up the whole project directory, including `data/`.
 
-| File | Contents |
-|---|---|
-| `reg.json` | Registration: device ID, account and keys |
+| File                         | Contents                                       |
+|------------------------------|------------------------------------------------|
+| `reg.json`                   | Registration: device ID, account and keys      |
 | `conf.json`, `settings.json` | Configuration associated with the registration |
-| `cfwarp_*.txt` | WARP logs. No backup needed. |
+| `cfwarp_*.txt`               | WARP logs. No backup needed.                   |
 
 **Restore on a new host:**
 
@@ -560,6 +574,7 @@ Back up the whole project directory, including `data/`.
 4. Verify (section 8). Check #1 must show the same ID.
 
 **Restore without `data/`:**
+
 - Consumer: a new Free registration is created. With WARP+, the license key must be applied again.
 - Zero Trust: the token must be obtained and injected again.
 
@@ -594,55 +609,58 @@ Detailed WARP logs are stored in `data/<mode>/cfwarp_service_log.txt`, with auto
 
 ## 11. Troubleshooting
 
-| Symptom | Cause | Solution |
-|---|---|---|
-| The proxy does not respond | WARP disconnected (blocked by the kill switch) or the container is restarting | `docker logs` and `warp-cli status`; then `warp-cli connect` or `docker compose restart` |
-| `/bin/bash^M: bad interpreter` | `entrypoint.sh` with CRLF line endings | Convert to LF and rebuild |
-| `Invalid WARP_MODE` | Value other than `consumer` or `zerotrust` | Fix `environment` in `compose.yaml` |
-| Registration with an unexpected ID | `data/<mode>/` empty or not mounted | Stop, restore `data/<mode>/` and start |
-| Zero Trust: "Waiting for manual registration" | Token not injected | Section 6.2, steps 3 and 4 |
-| Zero Trust: internal domain does not resolve | Proxy DNS disabled in the client, or domain missing from `extra_hosts` | Enable the option (7.1) or add the entry and run `docker compose --profile zerotrust up -d zerotrust` |
-| Zero Trust: internal IP unreachable | The IP is not in the profile Include list, has no route in the organization, or the `cloudflared` server cannot reach it | `warp-cli settings` (section 8); review routes and split tunnels in the Zero Trust dashboard |
-| Large transfers stall or connections hang after the handshake, while small requests work | The path MTU to the WARP endpoint is smaller than the tunnel packets (for example, another VPN client on the host lowers the interface MTU) | Check the path MTU (section 11.1). Try the other tunnel protocol: `warp-cli tunnel protocol set MASQUE\|WireGuard` (consumer) or the device profile (Zero Trust) |
-| `scp`/`sftp` from Windows very slow through the proxy | Windows OpenSSH performs poorly with any `ProxyCommand` | Section 7.3 |
-| `error gathering device information ... "C"` with `docker run --device /dev/net/tun` from Git Bash | Git Bash rewrites the `/dev/net/tun` path | Prefix the command with `MSYS_NO_PATHCONV=1` or use `docker compose` |
-| 403 responses or captchas on some sites | Those sites restrict WARP IPs | Not caused by the proxy; access them without the proxy |
-| Occasional high latency | WARP Free network congestion | Inherent to the Free plan |
+| Symptom                                                                                            | Cause                                                                                                                                       | Solution                                                                                                                                                         |
+|----------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| The proxy does not respond                                                                         | WARP disconnected (blocked by the kill switch) or the container is restarting                                                               | `docker logs` and `warp-cli status`; then `warp-cli connect` or `docker compose restart`                                                                         |
+| `/bin/bash^M: bad interpreter`                                                                     | `entrypoint.sh` with CRLF line endings                                                                                                      | Convert to LF and rebuild                                                                                                                                        |
+| `Invalid WARP_MODE`                                                                                | Value other than `consumer` or `zerotrust`                                                                                                  | Fix `environment` in `compose.yaml`                                                                                                                              |
+| Registration with an unexpected ID                                                                 | `data/<mode>/` empty or not mounted                                                                                                         | Stop, restore `data/<mode>/` and start                                                                                                                           |
+| Zero Trust: "Waiting for manual registration"                                                      | Token not injected                                                                                                                          | Section 6.2, steps 3 and 4                                                                                                                                       |
+| Zero Trust: internal domain does not resolve                                                       | Proxy DNS disabled in the client, or domain missing from `extra_hosts`                                                                      | Enable the option (7.1) or add the entry and run `docker compose --profile zerotrust up -d zerotrust`                                                            |
+| Zero Trust: internal IP unreachable                                                                | The IP is not in the profile Include list, has no route in the organization, or the `cloudflared` server cannot reach it                    | `warp-cli settings` (section 8); review routes and split tunnels in the Zero Trust dashboard                                                                     |
+| Large transfers stall or connections hang after the handshake, while small requests work           | The path MTU to the WARP endpoint is smaller than the tunnel packets (for example, another VPN client on the host lowers the interface MTU) | Check the path MTU (section 11.1). Try the other tunnel protocol: `warp-cli tunnel protocol set MASQUE\|WireGuard` (consumer) or the device profile (Zero Trust) |
+| `scp`/`sftp` from Windows very slow through the proxy                                              | Windows OpenSSH performs poorly with any `ProxyCommand`                                                                                     | Section 7.3                                                                                                                                                      |
+| `error gathering device information ... "C"` with `docker run --device /dev/net/tun` from Git Bash | Git Bash rewrites the `/dev/net/tun` path                                                                                                   | Prefix the command with `MSYS_NO_PATHCONV=1` or use `docker compose`                                                                                             |
+| 403 responses or captchas on some sites                                                            | Those sites restrict WARP IPs                                                                                                               | Not caused by the proxy; access them without the proxy                                                                                                           |
+| Occasional high latency                                                                            | WARP Free network congestion                                                                                                                | Inherent to the Free plan                                                                                                                                        |
 
 ### 11.1 Performance diagnostics
 
-Commands to locate where a slow transfer is limited. `<container>` is `warp-proxy` or `warp-proxy-zerotrust`; inside the container the proxy always listens on port 1080.
+Commands to locate where a slow transfer is limited. `<container>` is `warp-proxy` or `warp-proxy-zerotrust`; inside the container the proxy
+always listens on port 1080.
 
-| Check | Command | What it shows |
-|---|---|---|
-| Tunnel health | `docker exec <container> warp-cli --accept-tos tunnel stats` | Protocol, WARP endpoint IPs (`Endpoints`), latency and estimated loss |
-| Tunnel MTU | `docker exec <container> ip link show CloudflareWARP` | MTU of the tunnel interface |
-| Proxy → destination | `docker exec <container> ss -tin dst <server-ip>` | RTT, `cwnd`, peer receive window (`snd_wnd`), retransmissions, limiting flags |
-| Client → proxy | `docker exec <container> ss -tin sport :1080` | How data arrives from the client application |
+| Check                         | Command                                                                                   | What it shows                                                                                                                                                                                                                      |
+|-------------------------------|-------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tunnel health                 | `docker exec <container> warp-cli --accept-tos tunnel stats`                              | Protocol, WARP endpoint IPs (`Endpoints`), latency and estimated loss                                                                                                                                                              |
+| Tunnel MTU                    | `docker exec <container> ip link show CloudflareWARP`                                     | MTU of the tunnel interface                                                                                                                                                                                                        |
+| Proxy → destination           | `docker exec <container> ss -tin dst <server-ip>`                                         | RTT, `cwnd`, peer receive window (`snd_wnd`), retransmissions, limiting flags                                                                                                                                                      |
+| Client → proxy                | `docker exec <container> ss -tin sport :1080`                                             | How data arrives from the client application                                                                                                                                                                                       |
 | Path MTU to the WARP endpoint | Linux: `ping -M do -s <size> <endpoint-ip>`<br>Windows: `ping -f -l <size> <endpoint-ip>` | Largest packet that reaches the endpoint without fragmentation (packet = `<size>` + 28 bytes). The result is also capped by the MTU of the interface the ping leaves from (host, VM or WSL); a limit below that MTU is on the path |
 
 Reading `ss -tin` on the proxy → destination connection:
 
-| Observation | Meaning |
-|---|---|
-| `app_limited` and low `notsent` | The proxy is waiting for data: the limit is before the proxy (client application or how it connects to the proxy) |
-| `rwnd_limited` or small `snd_wnd` | The destination limits the transfer (receive window) |
-| High `retrans`, or loss in `tunnel stats` | Network or MTU problems on the tunnel path |
+| Observation                               | Meaning                                                                                                           |
+|-------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+| `app_limited` and low `notsent`           | The proxy is waiting for data: the limit is before the proxy (client application or how it connects to the proxy) |
+| `rwnd_limited` or small `snd_wnd`         | The destination limits the transfer (receive window)                                                              |
+| High `retrans`, or loss in `tunnel stats` | Network or MTU problems on the tunnel path                                                                        |
 
-The throughput of one connection is the difference in `bytes_acked` (sending) or `bytes_received` (receiving) between two samples, divided by the seconds between them.
+The throughput of one connection is the difference in `bytes_acked` (sending) or `bytes_received` (receiving) between two samples, divided
+by the seconds between them.
 
 ---
 
 ## 12. Design decisions and limitations
 
-| Decision | Reason |
-|---|---|
-| WARP tunnel + `microsocks` instead of WARP's native proxy mode (`warp-cli mode proxy`) | The native proxy mode has noticeably lower throughput (≈1.5 MB/s vs ≈4 MB/s, also with parallel connections) and cannot reach IPv6-only destinations. |
-| Tunnel protocol not forced | The protocol (MASQUE or WireGuard) is the one assigned by Cloudflare (consumer) or by the device profile (Zero Trust). `warp-cli settings` shows it and its origin. |
-| Per-user kill switch (`meta skuid`) | Covers IPv4 and IPv6 without depending on the addresses assigned by WARP. |
-| One image for both modes | The difference between modes is limited to the registration; the rest of the code is shared. |
+| Decision                                                                               | Reason                                                                                                                                                              |
+|----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| WARP tunnel + `microsocks` instead of WARP's native proxy mode (`warp-cli mode proxy`) | The native proxy mode has noticeably lower throughput (≈1.5 MB/s vs ≈4 MB/s, also with parallel connections) and cannot reach IPv6-only destinations.               |
+| Tunnel protocol not forced                                                             | The protocol (MASQUE or WireGuard) is the one assigned by Cloudflare (consumer) or by the device profile (Zero Trust). `warp-cli settings` shows it and its origin. |
+| Per-user kill switch (`meta skuid`)                                                    | Covers IPv4 and IPv6 without depending on the addresses assigned by WARP.                                                                                           |
+| One image for both modes                                                               | The difference between modes is limited to the registration; the rest of the code is shared.                                                                        |
 
 **Limitations:**
+
 - TCP only. `microsocks` does not forward UDP. Browsing through SOCKS does not use UDP.
 - No proxy authentication; hence it is published on `127.0.0.1` only.
 - ≈290 MB compressed image: `cloudflare-warp` depends on graphics libraries (webkit2gtk, llvm) that cannot be omitted.
