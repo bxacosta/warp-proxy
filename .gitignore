@@ -1,2 +1,5 @@
 # WARP registrations (device credentials)
 data/
+
+# IDE
+.idea

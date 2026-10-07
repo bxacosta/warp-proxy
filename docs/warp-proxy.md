@@ -39,7 +39,7 @@ Both modes use the same image and the same `entrypoint.sh`. They differ in the `
                                     |      kill switch (nftables)       |
                                     |                 |                 |
  Other traffic                      |                 v                 |
- --> ISP (unchanged)                | CloudflareWARP interface (MASQUE) |
+ --> ISP (unchanged)                |   CloudflareWARP interface (tun)  |
                                     |                 |                 |
                                     |                 v                 |
                                     |             warp-svc              |
@@ -473,6 +473,16 @@ ssh -G <server-ip> | Select-String "proxycommand|hostkeyalgorithms"   # must inc
 ssh -G github.com  | Select-String "proxycommand"                     # empty: direct connection
 ```
 
+**File transfers** (`scp`, `sftp`, `rsync` over SSH) use the same `ProxyCommand`:
+
+```bash
+scp -o ProxyCommand="nc -X 5 -x 127.0.0.1:1081 %h %p" ./file user@<server-ip>:/path/
+```
+
+Windows OpenSSH is very slow for bulk transfers whenever a `ProxyCommand` is used, regardless of the helper (`connect.exe`, `ncat`). Interactive sessions are not noticeably affected. OpenSSH on Linux (including WSL) with `nc` does not show this behavior.
+
+**Keepalives.** `ServerAliveInterval` and `ServerAliveCountMax` (e.g. `-o ServerAliveInterval=30 -o ServerAliveCountMax=6`) make the client send keepalives through the encrypted channel and detect a dead connection. They help when idle sessions are dropped or when an intermediate hop (proxy, NAT, tunnel reconnection) leaves a connection hung (`Broken pipe`, `Connection reset`). They do not resume an interrupted transfer; `rsync --partial` and `sftp reput` can.
+
 ### 7.4 Git
 
 | URL type | Proxy applied |
@@ -593,10 +603,33 @@ Detailed WARP logs are stored in `data/<mode>/cfwarp_service_log.txt`, with auto
 | Zero Trust: "Waiting for manual registration" | Token not injected | Section 6.2, steps 3 and 4 |
 | Zero Trust: internal domain does not resolve | Proxy DNS disabled in the client, or domain missing from `extra_hosts` | Enable the option (7.1) or add the entry and run `docker compose --profile zerotrust up -d zerotrust` |
 | Zero Trust: internal IP unreachable | The IP is not in the profile Include list, has no route in the organization, or the `cloudflared` server cannot reach it | `warp-cli settings` (section 8); review routes and split tunnels in the Zero Trust dashboard |
-| Zero Trust: large transfers stall | The organization enforces the WireGuard protocol (`warp-cli settings` → `WARP tunnel protocol: WireGuard`) and there are MTU issues inside Docker | Request MASQUE in the device profile (Device profiles → Tunnel protocol) |
+| Large transfers stall or connections hang after the handshake, while small requests work | The path MTU to the WARP endpoint is smaller than the tunnel packets (for example, another VPN client on the host lowers the interface MTU) | Check the path MTU (section 11.1). Try the other tunnel protocol: `warp-cli tunnel protocol set MASQUE\|WireGuard` (consumer) or the device profile (Zero Trust) |
+| `scp`/`sftp` from Windows very slow through the proxy | Windows OpenSSH performs poorly with any `ProxyCommand` | Section 7.3 |
 | `error gathering device information ... "C"` with `docker run --device /dev/net/tun` from Git Bash | Git Bash rewrites the `/dev/net/tun` path | Prefix the command with `MSYS_NO_PATHCONV=1` or use `docker compose` |
 | 403 responses or captchas on some sites | Those sites restrict WARP IPs | Not caused by the proxy; access them without the proxy |
 | Occasional high latency | WARP Free network congestion | Inherent to the Free plan |
+
+### 11.1 Performance diagnostics
+
+Commands to locate where a slow transfer is limited. `<container>` is `warp-proxy` or `warp-proxy-zerotrust`; inside the container the proxy always listens on port 1080.
+
+| Check | Command | What it shows |
+|---|---|---|
+| Tunnel health | `docker exec <container> warp-cli --accept-tos tunnel stats` | Protocol, WARP endpoint IPs (`Endpoints`), latency and estimated loss |
+| Tunnel MTU | `docker exec <container> ip link show CloudflareWARP` | MTU of the tunnel interface |
+| Proxy → destination | `docker exec <container> ss -tin dst <server-ip>` | RTT, `cwnd`, peer receive window (`snd_wnd`), retransmissions, limiting flags |
+| Client → proxy | `docker exec <container> ss -tin sport :1080` | How data arrives from the client application |
+| Path MTU to the WARP endpoint | Linux: `ping -M do -s <size> <endpoint-ip>`<br>Windows: `ping -f -l <size> <endpoint-ip>` | Largest packet that reaches the endpoint without fragmentation (packet = `<size>` + 28 bytes). The result is also capped by the MTU of the interface the ping leaves from (host, VM or WSL); a limit below that MTU is on the path |
+
+Reading `ss -tin` on the proxy → destination connection:
+
+| Observation | Meaning |
+|---|---|
+| `app_limited` and low `notsent` | The proxy is waiting for data: the limit is before the proxy (client application or how it connects to the proxy) |
+| `rwnd_limited` or small `snd_wnd` | The destination limits the transfer (receive window) |
+| High `retrans`, or loss in `tunnel stats` | Network or MTU problems on the tunnel path |
+
+The throughput of one connection is the difference in `bytes_acked` (sending) or `bytes_received` (receiving) between two samples, divided by the seconds between them.
 
 ---
 
@@ -605,7 +638,7 @@ Detailed WARP logs are stored in `data/<mode>/cfwarp_service_log.txt`, with auto
 | Decision | Reason |
 |---|---|
 | WARP tunnel + `microsocks` instead of WARP's native proxy mode (`warp-cli mode proxy`) | The native proxy mode has noticeably lower throughput (≈1.5 MB/s vs ≈4 MB/s, also with parallel connections) and cannot reach IPv6-only destinations. |
-| MASQUE protocol (default) | With WireGuard inside Docker, large transfers stall due to MTU issues. |
+| Tunnel protocol not forced | The protocol (MASQUE or WireGuard) is the one assigned by Cloudflare (consumer) or by the device profile (Zero Trust). `warp-cli settings` shows it and its origin. |
 | Per-user kill switch (`meta skuid`) | Covers IPv4 and IPv6 without depending on the addresses assigned by WARP. |
 | One image for both modes | The difference between modes is limited to the registration; the rest of the code is shared. |
 
