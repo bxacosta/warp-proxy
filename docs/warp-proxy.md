@@ -72,20 +72,14 @@ port:
 
 ## 4. Structure
 
-```
-warp-proxy/
-├── Dockerfile
-├── entrypoint.sh
-├── compose.yaml
-├── .dockerignore
-├── .gitattributes
-├── .gitignore
-├── docs/
-│   └── warp-proxy.md
-└── data/                    # created on first start
-    ├── consumer/            # consumer mode registration
-    └── zerotrust/           # Zero Trust mode registration
-```
+| Path                                                                                                      | Contents                                                                |
+|-----------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| [`Dockerfile`](../Dockerfile)                                                                             | Image: WARP client, `microsocks` and healthcheck (section 5.1).         |
+| [`entrypoint.sh`](../entrypoint.sh)                                                                       | Startup: kill switch, registration, connection and proxy (section 5.2). |
+| [`compose.yaml`](../compose.yaml)                                                                         | `consumer` and `zerotrust` services (section 5.3).                      |
+| [`.dockerignore`](../.dockerignore), [`.gitattributes`](../.gitattributes), [`.gitignore`](../.gitignore) | Build context, line endings and ignored files (section 5.4).            |
+| `data/consumer/`                                                                                          | Consumer mode registration. Created on first start.                     |
+| `data/zerotrust/`                                                                                         | Zero Trust mode registration. Created on first start.                   |
 
 `data/` contains the device credentials. It is the only directory that requires backup (section 9) and must not be published.
 
@@ -93,37 +87,11 @@ warp-proxy/
 
 ## 5. Files
 
+This section describes the purpose of each file; the linked files are the reference for their exact contents.
+
 `entrypoint.sh` requires LF line endings. With CRLF the container fails with `/bin/bash^M: bad interpreter`.
 
-### 5.1 `Dockerfile`
-
-```dockerfile
-FROM ubuntu:24.04
-
-ARG WARP_VERSION=""
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg dbus iproute2 nftables microsocks && \
-    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ noble main" > /etc/apt/sources.list.d/cloudflare-client.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends "cloudflare-warp${WARP_VERSION:+=$WARP_VERSION}" && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd --system --no-create-home --shell /usr/sbin/nologin socks
-
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-EXPOSE 1080
-
-HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
-    CMD curl -fsS --max-time 10 --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -q '^warp=on'
-
-ENTRYPOINT ["/entrypoint.sh"]
-```
+### 5.1 [`Dockerfile`](../Dockerfile)
 
 | Element                | Purpose                                                                        |
 |------------------------|--------------------------------------------------------------------------------|
@@ -134,82 +102,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 | `socks` user           | Unprivileged user that runs the proxy and is subject to the kill switch.       |
 | `HEALTHCHECK`          | Verifies every 60 s that proxy traffic goes through WARP (`warp=on`).          |
 
-### 5.2 `entrypoint.sh`
-
-```bash
-#!/bin/bash
-set -euo pipefail
-
-LISTEN_PORT=1080
-
-# consumer: creates a consumer (Free) registration if none exists.
-# zerotrust: waits for the organization registration to be injected (token).
-WARP_MODE="${WARP_MODE:-consumer}"
-
-case "$WARP_MODE" in
-    consumer|zerotrust) ;;
-    *) echo "Invalid WARP_MODE: '$WARP_MODE' (use consumer or zerotrust)" >&2; exit 1 ;;
-esac
-
-# Kill switch: the "socks" user can only send traffic through the WARP tunnel.
-# If WARP goes down, its connections are dropped instead of leaving through eth0.
-# Docker's embedded DNS is also blocked to prevent DNS leaks.
-nft -f - <<NFT
-table inet warp_proxy_killswitch {
-    chain output {
-        type filter hook output priority -10; policy accept;
-        # Replies to clients connected to the proxy (they arrive through eth0)
-        meta skuid "socks" ct direction reply accept
-        meta skuid "socks" ip daddr 127.0.0.11 drop
-        meta skuid "socks" oifname != { "lo", "CloudflareWARP" } drop
-    }
-}
-NFT
-
-# D-Bus (required by warp-svc)
-mkdir -p /run/dbus
-rm -f /run/dbus/pid
-dbus-daemon --config-file=/usr/share/dbus-1/system.conf
-
-# WARP daemon (it already writes its logs to /var/lib/cloudflare-warp)
-warp-svc --accept-tos >/dev/null 2>&1 &
-WARP_PID=$!
-
-for _ in $(seq 1 30); do
-    warp-cli --accept-tos status >/dev/null 2>&1 && break
-    sleep 1
-done
-
-if ! warp-cli --accept-tos registration show >/dev/null 2>&1; then
-    if [ "$WARP_MODE" = "consumer" ]; then
-        echo "No registration found, creating a new one..."
-        warp-cli --accept-tos registration new
-    else
-        echo "No registration found. Waiting for manual registration (warp-cli registration token ...)"
-        until warp-cli --accept-tos registration show >/dev/null 2>&1; do
-            sleep 5
-        done
-        echo "Registration detected"
-    fi
-fi
-
-# In Zero Trust the organization may enforce the mode; a rejection is not an error
-warp-cli --accept-tos mode warp || echo "Notice: the mode is managed by the organization"
-warp-cli --accept-tos connect
-
-for _ in $(seq 1 60); do
-    warp-cli --accept-tos status | grep -q "Connected" && break
-    sleep 1
-done
-warp-cli --accept-tos status
-
-# Unprivileged SOCKS5 server (subject to the kill switch)
-setpriv --reuid=socks --regid=socks --clear-groups microsocks -i 0.0.0.0 -p "$LISTEN_PORT" >/dev/null 2>&1 &
-SOCKS_PID=$!
-
-wait -n "$WARP_PID" "$SOCKS_PID"
-exit 1
-```
+### 5.2 [`entrypoint.sh`](../entrypoint.sh)
 
 Startup sequence:
 
@@ -221,52 +114,15 @@ Startup sequence:
 6. Starts `microsocks` as the `socks` user.
 7. If `warp-svc` or `microsocks` exits, the script exits with code 1 and Docker restarts the container.
 
-### 5.3 `compose.yaml`
+Kill switch rules (`nftables` table `warp_proxy_killswitch`), applied to the traffic of the `socks` user:
 
-```yaml
-x-warp-proxy: &warp-proxy
-  build:
-    context: .
-    args:
-      WARP_VERSION: ""
-  image: warp-proxy:latest
-  restart: unless-stopped
-  init: true
-  cap_add:
-    - NET_ADMIN
-  devices:
-    - /dev/net/tun:/dev/net/tun
-  logging:
-    driver: json-file
-    options:
-      max-size: "10m"
-      max-file: "3"
+| Rule                                                    | Purpose                                                                 |
+|---------------------------------------------------------|-------------------------------------------------------------------------|
+| Accept replies (`ct direction reply`)                   | Replies to clients connected to the proxy, which arrive through `eth0`. |
+| Drop traffic to `127.0.0.11`                            | Blocks Docker's embedded DNS to prevent DNS leaks.                      |
+| Drop any interface other than `lo` and `CloudflareWARP` | If WARP goes down, connections fail instead of leaving through `eth0`.  |
 
-services:
-  consumer:
-    <<: *warp-proxy
-    container_name: warp-proxy
-    environment:
-      WARP_MODE: consumer
-    ports:
-      - "127.0.0.1:1080:1080"
-    volumes:
-      - ./data/consumer:/var/lib/cloudflare-warp
-
-  zerotrust:
-    <<: *warp-proxy
-    profiles: [ "zerotrust" ]
-    container_name: warp-proxy-zerotrust
-    environment:
-      WARP_MODE: zerotrust
-    ports:
-      - "127.0.0.1:1081:1080"
-    volumes:
-      - ./data/zerotrust:/var/lib/cloudflare-warp
-    # Internal domains without public DNS (name:IP)
-    # extra_hosts:
-    #   - "git.internal.example:10.0.0.10"
-```
+### 5.3 [`compose.yaml`](../compose.yaml)
 
 | Element                              | Purpose                                                                                        |
 |--------------------------------------|------------------------------------------------------------------------------------------------|
@@ -277,32 +133,13 @@ services:
 | `extra_hosts`                        | Static resolution of internal domains without public DNS (Zero Trust mode).                    |
 | `logging`                            | Docker log rotation: 3 files of 10 MB.                                                         |
 
-### 5.4 `.dockerignore`
+### 5.4 Auxiliary files
 
-```
-# Ignore everything and allow only what the Dockerfile uses
-*
-!entrypoint.sh
-```
-
-Allowlist: excludes everything from the build context except `entrypoint.sh`, the only file copied by the `Dockerfile`. Files or directories
-added to the project (for example `data/`, which holds credentials) stay out of the image without changing this file. If the `Dockerfile`
-gets a new `COPY`, the copied file must be added with `!<path>`.
-
-### 5.5 `.gitattributes`
-
-```
-* text=auto eol=lf
-```
-
-Enforces LF line endings in the repository files.
-
-### 5.6 `.gitignore`
-
-```
-# WARP registrations (device credentials)
-data/
-```
+| File                                  | Purpose                                                                                                                                                                                                                                                             |
+|---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`.dockerignore`](../.dockerignore)   | Allowlist: excludes everything from the build context except `entrypoint.sh`, the only file copied by the `Dockerfile`. New files (for example `data/`, which holds credentials) stay out of the image. A new `COPY` in the `Dockerfile` requires adding `!<path>`. |
+| [`.gitattributes`](../.gitattributes) | Enforces LF line endings in the repository files.                                                                                                                                                                                                                   |
+| [`.gitignore`](../.gitignore)         | Excludes `data/` (device credentials) from the repository.                                                                                                                                                                                                          |
 
 ---
 
