@@ -19,7 +19,13 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 1080
 
+# consumer: the Cloudflare trace through the proxy must report warp=on (or warp=plus).
+# zerotrust: the reachable destinations depend on the organization, so the tunnel state is checked.
 HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
-    CMD curl -fsS --max-time 10 --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -q '^warp=on'
+    CMD if [ "${WARP_MODE:-consumer}" = "zerotrust" ]; then \
+            warp-cli --accept-tos status | grep -q 'Status update: Connected'; \
+        else \
+            curl -fsS --max-time 10 --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -qE '^warp=(on|plus)'; \
+        fi
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -100,7 +100,14 @@ This section describes the purpose of each file; the linked files are the refere
 | `nftables`, `iproute2` | Kill switch and tunnel interface management.                                   |
 | `microsocks`           | SOCKS5 server.                                                                 |
 | `socks` user           | Unprivileged user that runs the proxy and is subject to the kill switch.       |
-| `HEALTHCHECK`          | Verifies every 60 s that proxy traffic goes through WARP (`warp=on`).          |
+| `HEALTHCHECK`          | Verifies the WARP connection every 60 s, according to `WARP_MODE` (see below). |
+
+Healthcheck:
+
+| `WARP_MODE` | Healthy when                                                                                                 |
+|-------------|--------------------------------------------------------------------------------------------------------------|
+| `consumer`  | `https://www.cloudflare.com/cdn-cgi/trace` through the proxy returns `warp=on` or `warp=plus`                |
+| `zerotrust` | `warp-cli status` reports `Connected`. The reachable destinations depend on the organization (section 6.2).  |
 
 ### 5.2 [`entrypoint.sh`](../entrypoint.sh)
 
@@ -218,10 +225,19 @@ docker exec warp-proxy-zerotrust warp-cli --accept-tos registration show  # orga
 docker exec warp-proxy-zerotrust warp-cli --accept-tos status             # Status update: Connected
 ```
 
+**Split tunnel.** The organization defines which destinations go through the tunnel (`Include mode` / `Exclude mode` in
+`warp-cli settings`, section 8). The kill switch only allows traffic through the tunnel, so the proxy reaches exactly those destinations:
+
+| Split tunnel mode | Reachable through the proxy                       |
+|-------------------|---------------------------------------------------|
+| Exclude           | Everything except the excluded networks           |
+| Include           | Only the networks in the list; no public Internet |
+
+In Include mode, clients send only internal destinations to the proxy: a PAC file or a proxy extension in the browser, and host-scoped configuration in SSH
+and Git (sections 7.3 and 7.4).
+
 **Considerations:**
 
-- The kill switch only allows traffic through the tunnel. Networks that the organization excludes from the tunnel (*split tunnels*) are not
-  reachable through the proxy.
 - If the organization enforces the connection mode, the mode change is ignored and a notice is logged.
 - Re-authentication when the Access session expires:
 
@@ -382,6 +398,9 @@ Commands for consumer mode. For Zero Trust: container `warp-proxy-zerotrust` and
 
 In the configured browser, `https://www.cloudflare.com/cdn-cgi/trace` must show `warp=on`.
 
+With split tunnel in Include mode, the trace is outside the tunnel. Checks #4, #6 and #7 use an internal destination from the list:
+`curl -k --socks5-hostname 127.0.0.1:1081 https://<internal-host>/` returns an HTTP response while connected and fails after `disconnect`.
+
 **Additional checks in Zero Trust mode:**
 
 | Check                                        | Command                                                                                   | Expected result                                                                                       |
@@ -455,6 +474,7 @@ Detailed WARP logs are stored in `data/<mode>/cfwarp_service_log.txt`, with auto
 | Zero Trust: "Waiting for manual registration"                                                      | Token not injected                                                                                                                          | Section 6.2, steps 3 and 4                                                                                                                                       |
 | Zero Trust: internal domain does not resolve                                                       | Proxy DNS disabled in the client, or domain missing from `extra_hosts`                                                                      | Enable the option (7.1) or add the entry and run `docker compose --profile zerotrust up -d zerotrust`                                                            |
 | Zero Trust: internal IP unreachable                                                                | The IP is not in the profile Include list, has no route in the organization, or the `cloudflared` server cannot reach it                    | `warp-cli settings` (section 8); review routes and split tunnels in the Zero Trust dashboard                                                                     |
+| Zero Trust: public sites do not load through the proxy                                             | Split tunnel in Include mode: only the networks in the list go through the tunnel                                                           | Send only internal destinations to the proxy (section 6.2)                                                                                                       |
 | Large transfers stall or connections hang after the handshake, while small requests work           | The path MTU to the WARP endpoint is smaller than the tunnel packets (for example, another VPN client on the host lowers the interface MTU) | Check the path MTU (section 11.1). Try the other tunnel protocol: `warp-cli tunnel protocol set MASQUE\|WireGuard` (consumer) or the device profile (Zero Trust) |
 | `scp`/`sftp` from Windows very slow through the proxy                                              | Windows OpenSSH performs poorly with any `ProxyCommand`                                                                                     | Section 7.3                                                                                                                                                      |
 | `error gathering device information ... "C"` with `docker run --device /dev/net/tun` from Git Bash | Git Bash rewrites the `/dev/net/tun` path                                                                                                   | Prefix the command with `MSYS_NO_PATHCONV=1` or use `docker compose`                                                                                             |

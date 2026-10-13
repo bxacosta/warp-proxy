@@ -7,7 +7,7 @@ Cloudflare WARP client in Docker, exposed as a local SOCKS5 proxy. Only applicat
 - **Two modes:** consumer (WARP Free / WARP+) and Cloudflare Zero Trust (access to an organization's private network).
 - **Kill switch:** if WARP disconnects, the proxy stops forwarding instead of leaking traffic through the ISP. DNS leaks are also blocked.
 - **Local only:** published on `127.0.0.1`.
-- **Self-healing:** the container restarts if `warp-svc` or the proxy exits, and a healthcheck verifies `warp=on`.
+- **Self-healing:** the container restarts if `warp-svc` or the proxy exits, and a healthcheck verifies the WARP connection.
 - **Persistent registration:** stored in `data/`, reused across rebuilds.
 
 ## Quick start
