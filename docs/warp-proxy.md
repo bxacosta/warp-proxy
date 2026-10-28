@@ -270,13 +270,26 @@ Consumer on `127.0.0.1:1080` and Zero Trust on `127.0.0.1:1081`, each with its o
 
 The examples use port 1080 (consumer). Zero Trust uses port 1081.
 
-### 7.1 Firefox
+### 7.1 Browsers
+
+**Firefox:**
 
 1. **Settings → General → Network Settings → Settings…**
 2. **Manual proxy configuration.**
 3. **SOCKS Host:** `127.0.0.1`. **Port:** `1080`. **SOCKS v5**.
 4. HTTP/HTTPS fields empty.
 5. Enable **Proxy DNS when using SOCKS v5**. Without this option, DNS queries go through the ISP and `extra_hosts` domains are not resolved.
+
+**WebRTC.** WebRTC uses UDP, which browsers do not send through SOCKS5 proxies. Depending on the browser and how the proxy is
+configured, WebRTC traffic may leave directly through the host network and expose the ISP IP to any website:
+
+| Browser                | Behavior                                                                 | Setting                                                                                      |
+|------------------------|--------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| Firefox (manual proxy) | No leak by default (tested with Firefox 159): WebRTC only uses the proxy | None                                                                                         |
+| Brave                  | Leaks by default, also with the proxy set through an extension           | **Settings → Privacy and security → WebRTC IP handling policy → Disable non-proxied UDP**    |
+| Chrome, Edge           | Leaks by default, also with the proxy set through an extension           | Policy `WebRtcIPHandling = disable_non_proxied_udp`, or the WebRTC Network Limiter extension |
+
+Restricting WebRTC to the proxy may break voice and video calls in the browser. Verify the result with the browser leak test (section 8).
 
 ### 7.2 curl
 
@@ -398,6 +411,15 @@ Commands for consumer mode. For Zero Trust: container `warp-proxy-zerotrust` and
 
 In the configured browser, `https://www.cloudflare.com/cdn-cgi/trace` must show `warp=on`.
 
+**Browser leak test.** Open `https://browserleaks.com/ip` in the configured browser (section 7.1):
+
+| Check                                 | Expected result                                         |
+|---------------------------------------|---------------------------------------------------------|
+| IP Address                            | Cloudflare IP (`ISP: Cloudflare`). Never the ISP IP.    |
+| IPv6 Leak Test                        | Cloudflare IPv6 or empty. Never the ISP IPv6.           |
+| WebRTC Leak Test                      | `n/a` or Cloudflare IP. Never the ISP IP (section 7.1). |
+| DNS Leak Test (**Run DNS Leak Test**) | Cloudflare servers only. No ISP DNS servers.            |
+
 With split tunnel in Include mode, the trace is outside the tunnel. Checks #4, #6 and #7 use an internal destination from the list:
 `curl -k --socks5-hostname 127.0.0.1:1081 https://<internal-host>/` returns an HTTP response while connected and fails after `disconnect`.
 
@@ -479,6 +501,8 @@ Detailed WARP logs are stored in `data/<mode>/cfwarp_service_log.txt`, with auto
 | `scp`/`sftp` from Windows very slow through the proxy                                              | Windows OpenSSH performs poorly with any `ProxyCommand`                                                                                     | Section 7.3                                                                                                                                                      |
 | `error gathering device information ... "C"` with `docker run --device /dev/net/tun` from Git Bash | Git Bash rewrites the `/dev/net/tun` path                                                                                                   | Prefix the command with `MSYS_NO_PATHCONV=1` or use `docker compose`                                                                                             |
 | 403 responses or captchas on some sites                                                            | Those sites restrict WARP IPs                                                                                                               | Not caused by the proxy; access them without the proxy                                                                                                           |
+| The browser leak test shows the ISP IP under WebRTC                                                | The browser sends WebRTC (UDP) directly through the host network, outside the proxy                                                         | Restrict WebRTC in the browser (section 7.1)                                                                                                                     |
+| The browser leak test shows ISP DNS servers                                                        | Remote DNS resolution disabled in the browser                                                                                               | Enable **Proxy DNS when using SOCKS v5** (section 7.1)                                                                                                           |
 | Occasional high latency                                                                            | WARP Free network congestion                                                                                                                | Inherent to the Free plan                                                                                                                                        |
 
 ### 11.1 Performance diagnostics
@@ -518,7 +542,8 @@ by the seconds between them.
 
 **Limitations:**
 
-- TCP only. `microsocks` does not forward UDP. Browsing through SOCKS does not use UDP.
+- TCP only. `microsocks` does not forward UDP. A SOCKS5 server with UDP support would not change browser behavior: browsers do not send
+  UDP through SOCKS5 proxies, and WebRTC depends on the browser settings (section 7.1).
 - No proxy authentication; hence it is published on `127.0.0.1` only.
 - ≈290 MB compressed image: `cloudflare-warp` depends on graphics libraries (webkit2gtk, llvm) that cannot be omitted.
 - Requires `NET_ADMIN` and `/dev/net/tun`.
